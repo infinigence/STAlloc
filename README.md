@@ -30,9 +30,9 @@ This repository contains the artifact accompanying our paper:
 ### pretrain_xxx.py
 ```python
 """
-At the beginning of pretrain.py, import stalloc
+At the beginning of pretrain.py, import STAlloc
 """
-from stalloc.utils.hook_model import hook_memory_model
+from STAlloc.utils.hook_model import hook_memory_model
 
 def model_provider(...):
     ...

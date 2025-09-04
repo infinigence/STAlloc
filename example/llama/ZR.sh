@@ -27,9 +27,8 @@ DISTRIBUTED_ARGS="--nproc_per_node $GPUS_PER_NODE --nnodes $NNODES --node_rank $
 
 # note: Using fp16 makes the first several iterations have skipped iterations, after which the loss becomes normal.
 # Using bf16 does not have this problem, the first iteration has normal loss.#      
-TP=${TP:-4}
+TP=${TP:-2}
 PP=${PP:-2}
-VPP=${VPP:-2}  # virtual pipeline stages
 MBS=${MBS:-4}
 GBS=${GBS:-128}  # should be multiple of MBS*TP*PP
 GRANULARITY=${GRANULARITY:-full}
@@ -48,7 +47,7 @@ export STALLOC_LOG_LEVEL=0
 export STALLOC_STATIC_FALLBACK=1
 export STALLOC_LIB_PATH=${STALLOC_DIR}/STAlloc/Allocator
 
-MODEL_TAG=llama-${MODEL_SIZE}b_WS${WORLD_SIZE}_TP${TP}_PP${PP}_MBS${MBS}_GBS${GBS}_SEQ${SEQ}_${GRANULARITY}_RCP${RCP}_VPP${VPP}
+MODEL_TAG=llama-${MODEL_SIZE}b_WS${WORLD_SIZE}_TP${TP}_PP${PP}_MBS${MBS}_GBS${GBS}_SEQ${SEQ}_${GRANULARITY}_RCP${RCP}_ZeRO
 MEMORY_SAVED_DIR=${STALLOC_DIR}/STAlloc/allocator_case
 export STALLOC_MODEL_INFO_PATH=${MEMORY_SAVED_DIR}/${MODEL_TAG}
 if [ "$STALLOC_MODE" == "Trace" ]; then
@@ -161,6 +160,7 @@ CMD="torchrun $DISTRIBUTED_ARGS \
        --recompute-granularity ${GRANULARITY} \
        --use-flash-attn \
        --log-throughput \
+       --use-distributed-optimizer \
        ${RECOMPUTE_ARGS} \
        "
 

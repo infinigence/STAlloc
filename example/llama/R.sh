@@ -5,10 +5,10 @@ export PYTHONPATH=${PYTHONPATH:-"/workspace/Megatron-LM-080"}
 export STALLOC_DIR=${STALLOC_DIR:-"/workspace"}
 SRC_PATH=${PYTHONPATH}/pretrain_gpt.py
 export PYTHONPATH=${PYTHONPATH}:${STALLOC_DIR}
-DATA_PATH=/dataset/RedPajama-Data-1T-Sample/RedPajama-Data-1T-Sample_text_document
-VOCAB_FILE=/dataset/gpt2/gpt2-vocab.json
-MERGE_FILE=/dataset/gpt2/gpt2-merges.txt
-TOKENIZER_PATH=/dataset/gpt2/llama2_tokenizer.model
+DATA_PATH=${DATA_PATH}
+VOCAB_FILE=${VOCAB_FILE}
+MERGE_FILE=${MERGE_FILE}
+TOKENIZER_PATH=${TOKENIZER_PATH}
 
 # Env vars
 export OMP_NUM_THREADS=8
@@ -31,8 +31,8 @@ TP=${TP:-4}
 PP=${PP:-2}
 MBS=${MBS:-4}
 GBS=${GBS:-128}  # should be multiple of MBS*TP*PP
-GRANULARITY=${GRANULARITY:-selective}
-RCP=${RCP:-0}
+GRANULARITY=${GRANULARITY:-full}
+RCP=${RCP:-16}
 ITERS=${TRAIN_ITERS:-10}
 SEQ=4096
 MODEL_SIZE=${MODEL_SIZE:-7}  # 7, 13, 70, 130, tiny
@@ -45,10 +45,10 @@ export STALLOC_DYNAMIC=${STALLOC_DYNAMIC:-0}
 # export STALLOC_DYNAMIC_DIFF=1
 export STALLOC_LOG_LEVEL=0
 export STALLOC_STATIC_FALLBACK=1
-export STALLOC_LIB_PATH=${STALLOC_DIR}/stalloc/Allocator
+export STALLOC_LIB_PATH=${STALLOC_DIR}/STAlloc/Allocator
 
 MODEL_TAG=llama-${MODEL_SIZE}b_WS${WORLD_SIZE}_TP${TP}_PP${PP}_MBS${MBS}_GBS${GBS}_SEQ${SEQ}_${GRANULARITY}_RCP${RCP}
-MEMORY_SAVED_DIR=${STALLOC_DIR}/stalloc/allocator_case
+MEMORY_SAVED_DIR=${STALLOC_DIR}/STAlloc/allocator_case
 export STALLOC_MODEL_INFO_PATH=${MEMORY_SAVED_DIR}/${MODEL_TAG}
 if [ "$STALLOC_MODE" == "Trace" ]; then
     if [ -e "${STALLOC_MODEL_INFO_PATH}/trace" ]; then
@@ -109,8 +109,8 @@ if [ "$STALLOC_MODE" == "Torch" ]; then
     LOG_NAME=torch_${TORCH_VERSION}
 fi
 
-LOG_PATH=${STALLOC_DIR}/stalloc/log/llama/${MODEL_TAG}/${LOG_NAME}.log
-mkdir -p ${STALLOC_DIR}/stalloc/log/llama/${MODEL_TAG}
+LOG_PATH=${STALLOC_DIR}/STAlloc/log/llama/${MODEL_TAG}/${LOG_NAME}.log
+mkdir -p ${STALLOC_DIR}/STAlloc/log/llama/${MODEL_TAG}
 
 
 CMD="torchrun $DISTRIBUTED_ARGS \

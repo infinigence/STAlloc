@@ -145,7 +145,7 @@ def add_STAlloc_patch():
         return
     
     Patcher.add_patch(
-        'megatron.core.utils.GlobalMemoryBuffer', 'stalloc.utils.memory_patcher.STAllocMemoryBuffer'
+        'megatron.core.utils.GlobalMemoryBuffer', 'STAlloc.utils.memory_patcher.STAllocMemoryBuffer'
     )
 
 def apply_memory_patch():

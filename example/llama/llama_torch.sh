@@ -9,26 +9,17 @@ export SEGMENT=0
 export GMLAKE=0
 
 # Model parallelism and batch sizes
-export TP=4
-export PP=2
-export VPP=2  # virtual pipeline stages
-export MBS=4
-export GBS=128
-export MODEL_SIZE=7  # 7, 13, 70, 130, tiny
 export MODEL_NAME=llama
 
 export TRAIN_ITERS=20
 export STALLOC_DYNAMIC=0
 
 # Torch
-export GRANULARITY=selective
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/naive.sh
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/V.sh
-
-export RCP=16
-export GRANULARITY=full
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/R.sh
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/VR.sh
+bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/ZR.sh
 
 sleep 5s
 

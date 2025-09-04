@@ -8,3 +8,7 @@ local
 build
 dist
 log/
+*.csv
+*.png
+*.so
+allocator_case/

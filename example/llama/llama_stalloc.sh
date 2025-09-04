@@ -7,37 +7,25 @@ source "${SCRIPT_DIR}/config.sh"
 export STALLOC_MODE=Torch
 
 # Model parallelism and batch sizes
-export TP=4
-export PP=2
-export VPP=2  # virtual pipeline stages
-export MBS=4
-export GBS=128
-export MODEL_SIZE=7  # 7, 13, 70, 130, tiny
 export MODEL_NAME=llama
 
-export TRAIN_ITERS=20
+export TRAIN_ITERS=3
 export STALLOC_DYNAMIC=0
 
 # Torch
-export GRANULARITY=selective
-bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/naive.sh
-bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/V.sh
-
-export RCP=16
-export GRANULARITY=full
-bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/R.sh
-bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/VR.sh
+# bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/naive.sh
+# bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/V.sh
+# bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/R.sh
+# bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/VR.sh
+# bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/ZR.sh
 
 # Trace
 export STALLOC_MODE=Trace
-export GRANULARITY=selective
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/naive.sh
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/V.sh
-
-export RCP=16
-export GRANULARITY=full
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/R.sh
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/VR.sh
+bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/ZR.sh
 
 # Plan
 PLAN_PATH="${STALLOC_DIR}/STAlloc/Synthesizer"
@@ -57,9 +45,7 @@ for dir in ${BASE_LOG_DIR}/*; do
         echo "[$current/$total_dirs] Processing log: $allcator_case"
         TRACE_PATH=${BASE_LOG_DIR}/$allcator_case
         
-        for device in {0..7}; do
-            python ${PLAN_PATH} --model-memory-dir=$TRACE_PATH --device=$device &
-        done
+        python ${PLAN_PATH} --model-memory-dir=$TRACE_PATH
         
         echo "Plan for $allcator_case"
         echo "-----------------------------------------"
@@ -68,22 +54,18 @@ for dir in ${BASE_LOG_DIR}/*; do
     fi
 done
 
-wait
-
 echo "All Plan completed! Processed $((current-1)) log directories."
 
 # Alloc
 export STALLOC_MODE=Alloc
-export GRANULARITY=selective
+export TRAIN_ITERS=20
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/naive.sh
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/V.sh
-
-export RCP=16
-export GRANULARITY=full
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/R.sh
 bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/VR.sh
+bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/ZR.sh
 
-sleep 5s
+sleep 3s
 
 #  Analyze all logs
 BASE_LOG_DIR="${STALLOC_DIR}/STAlloc/log/${MODEL_NAME}"

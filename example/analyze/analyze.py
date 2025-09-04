@@ -409,8 +409,8 @@ def main():
     # Set input directory and output paths
     model_name = args.log_name.split('-')[0]
     base_path = os.environ.get('STALLOC_DIR')
-    log_dir = base_path+'/stalloc/log/'+model_name+'/'+ args.log_name
-    output_dir = base_path + '/stalloc/example/analyze/'+model_name
+    log_dir = base_path+'/STAlloc/log/'+model_name+'/'+ args.log_name
+    output_dir = base_path + '/STAlloc/example/analyze/'+model_name
     output_summary_file = os.path.join(output_dir, args.log_name+'.csv')
     output_comparison_file = os.path.join(output_dir, args.log_name+'.png')
     # Ensure output directory exists
