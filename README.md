@@ -1,4 +1,10 @@
-# STAlloc
+# Artifact for "Reducing GPU Memory Fragmentation via Spatio-Temporal Planning for Efficient Large-Scale Model Training"
+
+This repository contains the artifact accompanying our paper:
+
+> Zixiao Huang, Junhao Hu, Hao Lin, Chunyang Zhu, Yueran Tang, Quanlu Zhang, Zhen Guo, Zhenhua Li, Shengen Yan, Zhenhua Zhu, Guohao Dai, and Yu Wang.  
+> **STAlloc: Enhancing Memory Efficiency in Large-Scale Model Training with Spatio-Temporal Planning**  
+> To appear in *Proceedings of the 21st ACM European Conference on Computer Systems (EuroSys '26)*.  
 
 ## Description
 * STAlloc is a memory tool used to reduce memory fragmentation and improve memory utilization.
@@ -90,3 +96,17 @@ If you are using other version of Megatron-LM, you may need to check the path of
 
 ## License
 This project is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+
+## Citation
+
+If you find this work useful, please cite our paper:
+
+```bibtex
+@inproceedings{huang2026stalloc,
+  title     = {STAlloc: Enhancing Memory Efficiency in Large-Scale Model Training with Spatio-Temporal Planning},
+  author    = {Zixiao Huang and Junhao Hu and Hao Lin and Chunyang Zhu and Yueran Tang and Quanlu Zhang and Zhen Guo and Zhenhua Li and Shengen Yan and Zhenhua Zhu and Guohao Dai and Yu Wang},
+  booktitle = {Proceedings of the 21st ACM European Conference on Computer Systems (EuroSys '26)},
+  year      = {2026},
+  publisher = {ACM},
+  note      = {To appear in EuroSys '26}
+}
