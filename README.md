@@ -91,6 +91,9 @@ fi
 ### Step-4
 * Set `export STALLOC_MODE=Alloc` and run the training script.
 
+## Artifact Experiments
+See `example`.
+
 ## Others
 If you are using other version of Megatron-LM, you may need to check the path of patch functions, and modify in `utils/memory_patcher.py`.
 
