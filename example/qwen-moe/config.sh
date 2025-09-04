@@ -3,7 +3,7 @@
 # This file contains environment settings and imports paths configuration
 
 # Environment settings
-export PYTHONPATH=/mnt/public/eurosys26_artifact/Megatron-LM-080 # path to Megatron-LM core_r0.8.0
+export PYTHONPATH=/path/to/Megatron-LM-010 # path to Megatron-LM core_r0.8.0
 
 # Import dataset and tokenizer paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

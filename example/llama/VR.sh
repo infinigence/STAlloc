@@ -84,6 +84,17 @@ else
        "
 fi
 
+if [ "$STALLOC_MODE" == "Alloc" ]; then
+    LOG_NAME=alloc
+fi
+if [ "$STALLOC_MODE" == "Trace" ]; then
+    LOG_NAME=trace
+fi
+if [ "$STALLOC_MODE" == "Torch" ]; then
+    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+    LOG_NAME=torch_${TORCH_VERSION}
+fi
+
 if [ "$GMLAKE" == "1" ]; then
     export vmmDefragment=1
     export autoGC=10000
@@ -97,17 +108,6 @@ fi
 if [ "$SEGMENT" == "1" ]; then
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     LOG_NAME=segment
-fi
-
-if [ "$STALLOC_MODE" == "Alloc" ]; then
-    LOG_NAME=alloc
-fi
-if [ "$STALLOC_MODE" == "Trace" ]; then
-    LOG_NAME=trace
-fi
-if [ "$STALLOC_MODE" == "Torch" ]; then
-    TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
-    LOG_NAME=torch_${TORCH_VERSION}
 fi
 
 LOG_PATH=${STALLOC_DIR}/STAlloc/log/llama/${MODEL_TAG}/${LOG_NAME}.log

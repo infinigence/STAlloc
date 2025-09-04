@@ -1,18 +1,15 @@
 #!/bin/bash
 set -ex
 
-export PYTHONPATH=${PYTHONPATH:-"/workspace/Megatron-LM-080"}
-export STALLOC_DIR=${STALLOC_DIR:-"/workspace"}
+export PYTHONPATH=${PYTHONPATH}
+STALLOC_DIR=${STALLOC_DIR}
 SRC_PATH=${PYTHONPATH}/pretrain_gpt.py
 export PYTHONPATH=${PYTHONPATH}:${STALLOC_DIR}
-DATA_PATH=${DATA_PATH}
-VOCAB_FILE=${VOCAB_FILE}
-MERGE_FILE=${MERGE_FILE}
-TOKENIZER_PATH=${TOKENIZER_PATH}
 
 # Env vars
 export OMP_NUM_THREADS=8
 export CUDA_DEVICE_MAX_CONNECTIONS=1  #PP
+# export NCCL_DEBUG=TRACE
 export NCCL_CROSS_NIC=0
 
 # Change for multinode config
@@ -27,16 +24,21 @@ DISTRIBUTED_ARGS="--nproc_per_node $GPUS_PER_NODE --nnodes $NNODES --node_rank $
 
 # note: Using fp16 makes the first several iterations have skipped iterations, after which the loss becomes normal.
 # Using bf16 does not have this problem, the first iteration has normal loss.#      
-TP=${TP:-2}
-PP=${PP:-2}
-MBS=${MBS:-4}
-GBS=${GBS:-128}  # should be multiple of MBS*TP*PP
-GRANULARITY=${GRANULARITY:-full}
-RCP=${RCP:-16}
+# --save $CHECKPOINT_PATH \
+# --save-interval 10000 \
+TP=4
+PP=2
+VPP=2
+MBS=128
+GBS=$(($MBS*8))
+GRANULARITY=full
+RCP=12
 ITERS=${TRAIN_ITERS:-10}
-SEQ=4096
-MODEL_SIZE=${MODEL_SIZE:-7}  # 7, 13, 70, 130, tiny
-GMLAKE=${GMLAKE:-0}
+# MAX_SEQ_LEN=4096
+# MAX_POSITION_EMBEDDINGS=4096
+SEQ=1024
+MODEL_SIZE=gpt2
+GMLAKE=0
 SEGMENT=${SEGMENT:-0}
 export STALLOC_MODE=${STALLOC_MODE:-Torch}  # Alloc, Trace, Torch
 export STALLOC_TRACE_FAST_MODE=${TRACE_MODE:-1}  # may lead to OOM
@@ -47,7 +49,7 @@ export STALLOC_LOG_LEVEL=0
 export STALLOC_STATIC_FALLBACK=1
 export STALLOC_LIB_PATH=${STALLOC_DIR}/STAlloc/Allocator
 
-MODEL_TAG=llama-${MODEL_SIZE}b_WS${WORLD_SIZE}_TP${TP}_PP${PP}_MBS${MBS}_GBS${GBS}_SEQ${SEQ}_${GRANULARITY}_RCP${RCP}_ZeRO
+MODEL_TAG=gpt2_WS${WORLD_SIZE}_TP${TP}_PP${PP}_MBS${MBS}_GBS${GBS}_SEQ${SEQ}_${GRANULARITY}_RCP${RCP}_VPP${VPP}
 MEMORY_SAVED_DIR=${STALLOC_DIR}/STAlloc/allocator_case
 export STALLOC_MODEL_INFO_PATH=${MEMORY_SAVED_DIR}/${MODEL_TAG}
 if [ "$STALLOC_MODE" == "Trace" ]; then
@@ -69,8 +71,21 @@ elif [ ${MODEL_SIZE} == 13 ];  then HIDDEN_SIZE=5120;  NUM_HEAD=40; NUM_QUERY_GR
 elif [ ${MODEL_SIZE} == 70 ];  then HIDDEN_SIZE=8192;  NUM_HEAD=64; NUM_QUERY_GROUP=8;  NUM_LAYERS=16; FFN_HIDDEN_SIZE=28672; NORM_EPS=1e-5;
 elif [ ${MODEL_SIZE} == 130 ];  then HIDDEN_SIZE=12288;  NUM_HEAD=96; NUM_QUERY_GROUP=8;  NUM_LAYERS=88; FFN_HIDDEN_SIZE=31232; NORM_EPS=1e-5;
 elif [ ${MODEL_SIZE} == "tiny" ]; then HIDDEN_SIZE=128;  NUM_HEAD=4; NUM_QUERY_GROUP=4; NUM_LAYERS=4; FFN_HIDDEN_SIZE=512; NORM_EPS=1e-5;
+elif [ ${MODEL_SIZE} == "gpt2" ]; then HIDDEN_SIZE=1024;  NUM_HEAD=16; NUM_QUERY_GROUP=16; NUM_LAYERS=24; FFN_HIDDEN_SIZE=4096; NORM_EPS=1e-5;
 else echo "invalid MODEL_SIZE: ${MODEL_SIZE}"; exit 1
 fi
+
+
+BASE_PATH=${BASE_PATH}
+DATA_PATH=${DATA_PATH}
+VOCAB_FILE=${VOCAB_FILE}
+MERGE_FILE=${MERGE_FILE}
+TOKENIZER_PATH=${TOKENIZER_PATH}
+TIME=$(date "+%Y-%m-%d_%H-%M")
+
+# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+LOG_NAME=${MODEL_TAG}_${TIME}
 
 
 if [ "$GRANULARITY" == "full" ]; then
@@ -109,8 +124,8 @@ if [ "$SEGMENT" == "1" ]; then
     LOG_NAME=segment
 fi
 
-LOG_PATH=${STALLOC_DIR}/STAlloc/log/llama/${MODEL_TAG}/${LOG_NAME}.log
-mkdir -p ${STALLOC_DIR}/STAlloc/log/llama/${MODEL_TAG}
+LOG_PATH=${STALLOC_DIR}/STAlloc/log/${MODEL_NAME}/${MODEL_TAG}/${LOG_NAME}.log
+mkdir -p ${STALLOC_DIR}/STAlloc/log/${MODEL_NAME}/${MODEL_TAG}
 
 
 CMD="torchrun $DISTRIBUTED_ARGS \
@@ -160,9 +175,10 @@ CMD="torchrun $DISTRIBUTED_ARGS \
        --recompute-granularity ${GRANULARITY} \
        --use-flash-attn \
        --log-throughput \
-       --use-distributed-optimizer \
+       --num-layers-per-virtual-pipeline-stage ${VPP} \
        ${RECOMPUTE_ARGS} \
        "
+    #    --use-distributed-optimizer \
 
 
 echo ${CMD} | tee ${LOG_PATH}
