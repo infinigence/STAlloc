@@ -1,0 +1,10 @@
+__pycache__
+.vscode
+*.log
+*.idx
+*.npy
+*.DS_Store
+local
+build
+dist
+
