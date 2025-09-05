@@ -1,0 +1,5 @@
+log_file,group1_utilization,group1_wasted_memory,group1_reserved,group1_allocated,group2_utilization,group2_wasted_memory,group2_reserved,group2_allocated
+torch_2.3.0a0+40ec155e58.nv24.03.log,66.18%,7.12GB,21.05GB,13.93GB,63.43%,7.42GB,20.29GB,13.93GB
+gmlake.log,56.59%,10.89GB,25.09GB,14.2GB,54.82%,10.82GB,23.95GB,13.13GB
+segment.log,76.62%,4.25GB,18.18GB,13.93GB,75.61%,4.15GB,17.02GB,12.87GB
+alloc.log,97.94%,0.29GB,14.1GB,13.81GB,91.45%,1.19GB,13.93GB,12.74GB

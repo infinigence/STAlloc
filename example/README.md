@@ -9,6 +9,7 @@
 ## Run Experiments (E2-E5)
 ### E2: 
 ```shell
+# in NGC PyTorch 24.03 docker
 cd example/llama
 bash llama_stalloc.sh
 cd example/gpt2
@@ -17,12 +18,14 @@ bash gpt2_stalloc.sh
 
 ### E3:
 ```shell
+# in NGC PyTorch 24.03 docker
 cd example/llama
 bash llama_torch.sh
 bash llama_torch_es.sh
 # in GMLake docker
 bash llama_gmlake.sh
 
+# in NGC PyTorch 24.03 docker
 cd example/gpt2
 bash gpt2_torch.sh
 bash gpt2_torch_es.sh
@@ -30,17 +33,32 @@ bash gpt2_torch_es.sh
 bash gpt2_gmlake.sh
 ```
 
+Get statistics:
+```shell
+python example/memory_statistics.py example/analyze/llama/ example/analyze/gpt2/
+```
+
 ### E4:
 ```shell
+# in NGC PyTorch 24.03 docker
 cd example/qwen-moe
 bash qwen_stalloc.sh
 ```
 
 ### E5:
 ```shell
+# in NGC PyTorch 24.03 docker
 cd example/qwen-moe
 bash qwen_torch.sh
 bash qwen_torch_es.sh
 # in GMLake docker
 bash qwen_gmlake.sh
 ```
+
+Get statistics:
+```shell
+python example/memory_statistics.py example/analyze/qwen-moe/
+```
+
+## Note
+Offloading is not supported in the open-source test version of Megatron-LM. Therefore, we implemented and tested this feature (ZOR in Figure 7 of paper) in our private Megatron repository. For this set of experiments, we provide the original experimental data.
