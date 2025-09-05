@@ -1,4 +1,4 @@
-# Artifact for "Reducing GPU Memory Fragmentation via Spatio-Temporal Planning for Efficient Large-Scale Model Training"
+# Artifact for "STAlloc: Enhancing Memory Efficiency in Large-Scale Model Training with Spatio-Temporal Planning"
 
 This repository contains the artifact accompanying our paper:
 
