@@ -12,8 +12,8 @@ export MODEL_NAME=qwen-moe
 export TRAIN_ITERS=3
 export STALLOC_DYNAMIC=1
 
-# Torch
-# bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/naive.sh
+# Torch mode for warm up
+bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/naive.sh
 # bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/V.sh
 # bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/R.sh
 # bash ${STALLOC_DIR}/STAlloc/example/${MODEL_NAME}/VR.sh

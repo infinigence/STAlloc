@@ -32,7 +32,8 @@ This repository contains the artifact accompanying our paper:
 """
 At the beginning of pretrain.py, import STAlloc
 """
-from STAlloc.utils.hook_model import hook_memory_model
+import torch
+from STAlloc.utils.hook_model import hook_memory_model # STAlloc should be imported right after import torch
 
 def model_provider(...):
     ...
