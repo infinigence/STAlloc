@@ -1,4 +1,16 @@
 # Usage
+Preprcess dataset with the tool in Megatron-LM:
+```shell
+python Megatron-LM/tools/preprocess_data.py \
+       --input /path/to/data.jsonl \
+       --output-prefix my-prefix \
+       --vocab-file /path/to/gpt2-vocab.json \
+       --tokenizer-type GPT2BPETokenizer \
+       --merge-file /path/to/gpt2-merges.txt \
+       --append-eod
+```
+This will generate `my-prefix_text_document.idx` and `my-prefix_text_document.bin` in your current directory. Please add `/path/to/my-prefix_text_document` to `DATA_PATH` in `example/paths.sh`.
+
  Change Env in `example/paths.sh`, `example/model-name/config.sh`
 | Env | Description |
 | --- | ----------- |
