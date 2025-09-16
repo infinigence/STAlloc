@@ -21,6 +21,7 @@ This will generate `my-prefix_text_document.idx` and `my-prefix_text_document.bi
 
 ## Run Experiments (E2-E5)
 ### E2: 
+Note: Experiments for Qwen need Megatron-LM on `core_r0.8.0` tag.
 ```shell
 # in NGC PyTorch 24.03 docker
 cd example/llama
@@ -52,6 +53,7 @@ python example/memory_statistics.py example/analyze/llama/ example/analyze/gpt2/
 ```
 
 ### E4:
+Note: Experiments for Qwen need Megatron-LM on `core_r0.10.0` tag.
 ```shell
 # in NGC PyTorch 24.03 docker
 cd example/qwen-moe
@@ -66,6 +68,13 @@ bash qwen_torch.sh
 bash qwen_torch_es.sh
 # in GMLake docker
 bash qwen_gmlake.sh
+```
+Note: When testing **GMLake** on Megatron-LM `core_r0.10.0`, some framework code needs to be modified to ensure compatibility with **PyTorch 2.0** in the GMLake Docker environment.  We provide a diff file with the required modifications.
+
+Before running `qwen_gmlake.sh` please apply the patch with:
+```shell
+cd Megatron-LM # core_r0.10.0 for running Qwen model
+git apply /path/to/STAlloc/files/changes_for_torch2.0_r0.10.0.patch
 ```
 
 Get statistics:

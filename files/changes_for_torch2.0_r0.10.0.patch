@@ -1,0 +1,862 @@
+diff --git a/examples/multimodal/model_converter/internvit_converter.py b/examples/multimodal/model_converter/internvit_converter.py
+old mode 100755
+new mode 100644
+diff --git a/megatron/core/datasets/megatron_tokenizer.py b/megatron/core/datasets/megatron_tokenizer.py
+index 84f3546c..a055fe96 100644
+--- a/megatron/core/datasets/megatron_tokenizer.py
++++ b/megatron/core/datasets/megatron_tokenizer.py
+@@ -2,7 +2,7 @@
+ import json
+ from abc import ABC, abstractmethod
+ from collections import OrderedDict
+-from typing import Any
++from typing import Any, List
+ 
+ import numpy
+ 
+@@ -57,7 +57,7 @@ class MegatronTokenizer(ABC):
+         """
+         raise NotImplementedError("{} has no method 'detokenize'".format(type(self).__name__))
+ 
+-    def offsets(self, ids: list[int], text: str) -> list[int]:
++    def offsets(self, ids: List[int], text: str) -> List[int]:
+         """Convert embedding ids to text offsets
+ 
+         Args:
+diff --git a/megatron/core/dist_checkpointing/strategies/base.py b/megatron/core/dist_checkpointing/strategies/base.py
+index cdcdd49f..23367a7a 100644
+--- a/megatron/core/dist_checkpointing/strategies/base.py
++++ b/megatron/core/dist_checkpointing/strategies/base.py
+@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
+ from collections import defaultdict
+ from enum import Enum
+ from pathlib import Path
+-from typing import Any, DefaultDict, Union
++from typing import Any, DefaultDict, Union, Dict, Tuple
+ 
+ from ..mapping import CheckpointingException, ShardedStateDict, StateDict
+ from .async_utils import AsyncCallsQueue, AsyncRequest
+@@ -21,7 +21,7 @@ class StrategyAction(Enum):
+     SAVE_SHARDED = 'save_sharded'
+ 
+ 
+-default_strategies: DefaultDict[str, dict[tuple, Any]] = defaultdict(dict)
++default_strategies: DefaultDict[str, Dict[Tuple, Any]] = defaultdict(dict)
+ 
+ async_calls = AsyncCallsQueue()
+ 
+diff --git a/megatron/core/distributed/param_and_grad_buffer.py b/megatron/core/distributed/param_and_grad_buffer.py
+index 00c8fdd6..089073f8 100644
+--- a/megatron/core/distributed/param_and_grad_buffer.py
++++ b/megatron/core/distributed/param_and_grad_buffer.py
+@@ -7,7 +7,8 @@ from enum import Enum
+ from typing import Dict, List, Optional
+ 
+ import torch
+-from torch.distributed import _coalescing_manager
++# from torch.distributed import _coalescing_manager
++# from torch.cuda import stream_context
+ 
+ from megatron.core.rerun_state_machine import get_rerun_state_machine
+ 
+@@ -46,6 +47,11 @@ def shard_buffer(buffer: torch.Tensor, data_parallel_world_size: int):
+     return sharded_buffer
+ 
+ 
++def lcm(a: int, b: int) -> int:
++    """Calculate the least common multiple of two integers."""
++    return abs(a * b) // math.gcd(a, b)
++
++
+ class _ParamAndGradBucket:
+     """
+     Bucket to keep track of a subset of the model's parameters and gradients.
+@@ -188,10 +194,8 @@ class _ParamAndGradBucketGroup:
+             assert self.param_gather_handle is None
+ 
+         async_op = self.ddp_config.overlap_param_gather and not force_sync
+-        # Coalesce communication kernels across buckets in the bucket group.
+-        with _coalescing_manager(
+-            self.intra_distributed_optimizer_instance_group, async_ops=async_op
+-        ) as cm:
++        # Use nullcontext instead of _coalescing_manager
++        with nullcontext() as cm:
+             for bucket in self.buckets:
+                 local_data_view = shard_buffer(
+                     bucket.param_data, self.intra_distributed_optimizer_instance_size
+@@ -243,68 +247,20 @@ class _ParamAndGradBucketGroup:
+             if self.next_param_gather_bucket_group is not None and not skip_next_bucket_dispatch:
+                 self.next_param_gather_bucket_group.start_param_sync()
+ 
+-    def start_grad_sync(self):
++    def is_grad_sync_needed(self):
+         """
+-        Initiates grad sync (all-reduce or reduce-scatter) communication operations
+-        for all buckets in the bucket group.
+-
+-        When ddp_config.overlap_grad_reduce is set to True, dispatches an asynchronous
+-        communication call. When ddp_config.overlap_grad_reduce is set to False, makes
+-        synchronous call.
++        检查是否需要进行梯度同步。
++        当所有参数都有梯度时返回 True。
+         """
+-        assert (
+-            self.grad_reduce_handle is None
+-        ), 'Should not have multiple communication calls outstanding at once'
+-
+-        if self.ddp_config.check_for_nan_in_grad:
+-            self.check_for_nan_in_grad()
+-
+-        # gradient_scaling_factor already takes into account whether we are computing
+-        # an average or sum in the data-parallel collective.
+-        for bucket in self.buckets:
+-            if bucket.gradient_scaling_factor != 1.0:
+-                bucket.grad_data *= bucket.gradient_scaling_factor
++        return len(self.params_with_grad) == len(self.params)
+ 
+-        # Decide reduce_op.
+-        reduce_op = torch.distributed.ReduceOp.SUM
+-        if self.ddp_config.average_in_collective:
+-            reduce_op = torch.distributed.ReduceOp.AVG
+-
+-        # Stream synchronization logic of the CUDA streams that is
+-        # implemented below for the gradient reduction within and across
+-        # distributed optimizer instances.
+-
+-        # Compute Stream - -------------Gradient Compute-------------------
+-        # Comm. Stream   - ------(wait for nccl)-----(wait for nccl)-------
+-        # NCCL Stream    -       -------RS------     -------AR------
+-
+-        # Use async communications only when overlap_grad_reduce is True.
+-        async_op = (
+-            self.ddp_config.overlap_grad_reduce
+-            and self.ddp_config.num_distributed_optimizer_instances == 1
+-        )
+-        if (
+-            self.ddp_config.num_distributed_optimizer_instances > 1
+-            and self.ddp_config.overlap_grad_reduce
+-        ):
+-            # Assign a communication stream if we use partial DP DistOpt and we
+-            # need to overlap communication
+-            stream_context = torch.cuda.stream(self.communication_stream)
+-
+-            # The RS/AR communication stream needs to wait for the default stream
+-            # to complete its gradient computation before launching the next
+-            # gradient reduction collective
+-            self.communication_stream.wait_stream(torch.cuda.default_stream())
+-        else:
+-            stream_context = nullcontext()
+-
+-        if self.ddp_config.use_distributed_optimizer:
+-            communication_group = self.intra_distributed_optimizer_instance_group
+-        else:
+-            communication_group = self.data_parallel_group
++    def start_grad_sync(self, async_op=False):
++        """Start gradient synchronization."""
++        if not self.is_grad_sync_needed():
++            return
+ 
+-        # Coalesce communication kernels across buckets in the bucket group.
+-        with stream_context, _coalescing_manager(communication_group, async_ops=async_op) as cm:
++        communication_group = self.get_communication_group()
++        with nullcontext() as cm:
+             for bucket in self.buckets:
+                 if self.ddp_config.use_distributed_optimizer:
+                     local_data_view = shard_buffer(
+@@ -325,36 +281,9 @@ class _ParamAndGradBucketGroup:
+                         async_op=async_op,
+                     )
+ 
+-        # When enabling partial DP domain DistOpt, we need to All-Reduce across all partial domains
+-        if (
+-            self.ddp_config.use_distributed_optimizer
+-            and self.ddp_config.num_distributed_optimizer_instances > 1
+-        ):
+-
+-            # Create a new coalescing facility for the inter partial DP-AllReduce here
+-            with stream_context, _coalescing_manager(
+-                self.inter_distributed_optimizer_instance_group, async_ops=async_op
+-            ) as cm:
+-                for bucket in self.buckets:
+-                    local_data_view = shard_buffer(
+-                        bucket.grad_data, self.intra_distributed_optimizer_instance_size
+-                    )[self.intra_distributed_optimizer_instance_rank]
+-
+-                    torch.distributed.all_reduce(
+-                        local_data_view,
+-                        op=reduce_op,
+-                        group=self.inter_distributed_optimizer_instance_group,
+-                        async_op=async_op,
+-                    )
+-
+         if async_op:
+             self.grad_reduce_handle = cm
+         else:
+-            # When using `_coalescing_manager`, even if a synchronous op (async_op=False) is used,
+-            # `cm` is not None, which is different from when `_coalescing_manager` is not used in
+-            # which case the torch.distributed._reduce_scatter_base() will return None. In order to
+-            # maintain consistency with prior code, we need to manually set communication handle to
+-            # None.
+             self.grad_reduce_handle = None
+ 
+     def finish_grad_sync(self):
+@@ -474,7 +403,7 @@ class _ParamAndGradBuffer:
+                 # This also helps cuBLAS pick more efficient algorithms for GEMMs.
+                 # We now ensure that all buckets start at a memory address that is 256-byte
+                 # aligned (128 values since params and grads use >= 16-bit precision).
+-                return _pad(bucket_end_index, math.lcm(self.data_parallel_world_size, 128))
++                return _pad(bucket_end_index, lcm(self.data_parallel_world_size, 128))
+             return bucket_end_index
+ 
+         def _pad_start_of_param_if_needed(param_start_index: int) -> int:
+@@ -659,7 +588,7 @@ class _ParamAndGradBuffer:
+             log_strs.append(f'Params for bucket {index+1} ({numel} elements):')
+             for param in bucket.params:
+                 log_strs.append(f'\t{param_to_name[param]}')
+-        log_on_each_pipeline_stage(logger, logging.INFO, '\n'.join(log_strs))
++        # log_on_each_pipeline_stage(logger, logging.INFO, '\n'.join(log_strs))
+ 
+     def scale_gradients(self, scaling_factor: float) -> None:
+         """Scale the gradient data by `scaling_factor`."""
+diff --git a/megatron/core/extensions/transformer_engine.py b/megatron/core/extensions/transformer_engine.py
+index a59ed367..d25ad731 100644
+--- a/megatron/core/extensions/transformer_engine.py
++++ b/megatron/core/extensions/transformer_engine.py
+@@ -41,6 +41,14 @@ from megatron.core.transformer.transformer_config import TransformerConfig
+ from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
+ from megatron.core.utils import get_te_version, is_te_min_version
+ 
++try:
++    raise ImportError
++    import transformer_engine as te
++    HAVE_TE = True
++except ImportError:
++    HAVE_TE = False
++    te = None
++
+ 
+ def _get_extra_te_kwargs(config: TransformerConfig):
+     extra_transformer_engine_kwargs = {"params_dtype": config.params_dtype}
+@@ -66,6 +74,8 @@ class TENorm:
+ 
+     # TODO should we ditch normalization config and just use spec to choose LayerNorm vs RMSNorm?
+     def __new__(cls, config: TransformerConfig, hidden_size: int, eps: float = 1e-5):
++        if not HAVE_TE:
++            raise ImportError("Transformer Engine is not installed. Please install it or use local implementation.")
+         if config.normalization == "LayerNorm":
+             instance = te.pytorch.LayerNorm(
+                 hidden_size=hidden_size,
+@@ -114,6 +124,8 @@ class TELinear(te.pytorch.Linear):
+         tp_comm_buffer_name: str = None,
+         is_expert: bool = False,
+     ):
++        if not HAVE_TE:
++            raise ImportError("Transformer Engine is not installed. Please install it or use local implementation.")
+         self.config = config
+ 
+         # TE returns a zero length Tensor when bias=False and
+diff --git a/megatron/core/model_parallel_config.py b/megatron/core/model_parallel_config.py
+index 46a03f6d..5c5a9ab4 100644
+--- a/megatron/core/model_parallel_config.py
++++ b/megatron/core/model_parallel_config.py
+@@ -1,7 +1,7 @@
+ # Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+ 
+ from dataclasses import dataclass
+-from typing import Callable, ContextManager, Optional
++from typing import Callable, ContextManager, Optional, List
+ 
+ import torch
+ 
+@@ -39,7 +39,7 @@ class ModelParallelConfig:
+     context_parallel_size: int = 1
+     """Splits network input along sequence dimension across GPU ranks."""
+ 
+-    hierarchical_context_parallel_sizes: Optional[list[int]] = None
++    hierarchical_context_parallel_sizes: Optional[List[int]] = None
+     """Degrees of the hierarchical context parallelism. Users should provide a list to specify 
+        the sizes for different levels. Taking the a2a+p2p cp comm type as example, it contains
+        groups of two levels, so the first value of the list indicates the group size of the a2a
+diff --git a/megatron/core/models/common/embeddings/rope_utils.py b/megatron/core/models/common/embeddings/rope_utils.py
+index 3dd5193c..9652fa24 100644
+--- a/megatron/core/models/common/embeddings/rope_utils.py
++++ b/megatron/core/models/common/embeddings/rope_utils.py
+@@ -29,12 +29,12 @@ except ImportError:
+ 
+ 
+ try:
++    raise ImportError
+     from megatron.core.extensions.transformer_engine import fused_apply_rotary_pos_emb_thd
++    HAVE_TE = True
+ except ImportError:
+-    try:
+-        from apex.transformer.functional import fused_apply_rotary_pos_emb_thd
+-    except ImportError:
+-        fused_apply_rotary_pos_emb_thd = None
++    HAVE_TE = False
++    fused_apply_rotary_pos_emb_thd = None
+ 
+ 
+ try:
+diff --git a/megatron/core/models/gpt/gpt_layer_specs.py b/megatron/core/models/gpt/gpt_layer_specs.py
+old mode 100755
+new mode 100644
+index 749be324..dad0ce11
+--- a/megatron/core/models/gpt/gpt_layer_specs.py
++++ b/megatron/core/models/gpt/gpt_layer_specs.py
+@@ -25,6 +25,7 @@ from megatron.core.transformer.transformer_layer import TransformerLayer, Transf
+ from megatron.core.utils import is_te_min_version
+ 
+ try:
++    raise ImportError
+     from megatron.core.extensions.transformer_engine import (
+         TEColumnParallelGroupedLinear,
+         TEColumnParallelLinear,
+@@ -238,6 +239,7 @@ def _get_moe_module_spec(
+     fp8: Optional[str] = None,
+ ) -> ModuleSpec:
+     """Helper function to get module spec for MoE"""
++    use_te = False
+     if num_experts is None:
+         return None
+     if use_te and moe_grouped_gemm:
+@@ -250,7 +252,7 @@ def _get_moe_module_spec(
+         linear_fc1 = ColumnParallelLinear
+         linear_fc2 = RowParallelLinear
+ 
+-    use_te_grouped_gemm = use_te and TEColumnParallelGroupedLinear is not None
++    use_te_grouped_gemm = HAVE_TE and use_te and TEColumnParallelGroupedLinear is not None
+ 
+     return ModuleSpec(
+         module=MoELayer,
+diff --git a/megatron/core/models/mamba/mamba_layer_specs.py b/megatron/core/models/mamba/mamba_layer_specs.py
+old mode 100755
+new mode 100644
+diff --git a/megatron/core/models/retro/decoder_spec.py b/megatron/core/models/retro/decoder_spec.py
+index f431798f..07d3622b 100644
+--- a/megatron/core/models/retro/decoder_spec.py
++++ b/megatron/core/models/retro/decoder_spec.py
+@@ -40,6 +40,7 @@ except ImportError:
+     LNImpl = WrappedTorchNorm
+ 
+ try:
++    raise ImportError
+     from megatron.core.extensions.transformer_engine import (
+         TEColumnParallelLinear,
+         TEDotProductAttention,
+diff --git a/megatron/core/models/retro/encoder_spec.py b/megatron/core/models/retro/encoder_spec.py
+index 944d52f0..d373e7d2 100644
+--- a/megatron/core/models/retro/encoder_spec.py
++++ b/megatron/core/models/retro/encoder_spec.py
+@@ -21,6 +21,7 @@ from megatron.core.transformer.mlp import MLP, MLPSubmodules
+ from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+ 
+ try:
++    raise ImportError
+     from megatron.core.extensions.transformer_engine import (
+         TEColumnParallelLinear,
+         TEDotProductAttention,
+diff --git a/megatron/core/rerun_state_machine.py b/megatron/core/rerun_state_machine.py
+index 4db1ceba..8c64d3db 100644
+--- a/megatron/core/rerun_state_machine.py
++++ b/megatron/core/rerun_state_machine.py
+@@ -7,7 +7,7 @@ import os
+ import random
+ from collections import defaultdict
+ from enum import Enum
+-from typing import Any, Callable, Iterable, NamedTuple, Optional, Set, Tuple, Union
++from typing import Any, Callable, Iterable, NamedTuple, Optional, Set, Tuple, Union, List, Dict
+ 
+ import numpy as np
+ import torch
+@@ -36,8 +36,8 @@ EXIT_CODE_RESUME_TO_DISAMBIGUATE: int = 16
+ # Exit code returned when job failed on result validation.
+ EXIT_CODE_FAILED_ON_RESULT_VALIDATION: int = 17
+ 
+-SerializableStateType = Union[list, dict]
+-DataIteratorArgType = Optional[Union["RerunDataIterator", list["RerunDataIterator"]]]
++SerializableStateType = Union[List, Dict]
++DataIteratorArgType = Optional[Union["RerunDataIterator", List["RerunDataIterator"]]]
+ 
+ 
+ class Caller(NamedTuple):
+@@ -190,7 +190,7 @@ class RerunStateMachine:
+         self.logged_sdc_enabled: bool = False
+ 
+         self.error_injector: RerunErrorInjector = error_injector or RerunErrorInjector()
+-        self.validation_counts: dict[Caller, int] = defaultdict(int)
++        self.validation_counts: Dict[Caller, int] = defaultdict(int)
+         self.failed_validation_call: Optional[Call] = None
+         self.initial_result: Any = None
+         self.suspicious_node: str = None
+@@ -201,12 +201,12 @@ class RerunStateMachine:
+         self.state_restore_func: Optional[Callable[[SerializableStateType], None]] = (
+             state_restore_func
+         )
+-        self.data_iterator_checkpoints: Optional[list[SerializableStateType]] = None
++        self.data_iterator_checkpoints: Optional[List[SerializableStateType]] = None
+ 
+         self.last_loss: Optional[float] = None
+ 
+-        self.saved_results: dict[Call, Any] = {}
+-        self.stats: dict[Caller, QuickStats] = defaultdict(lambda: QuickStats())
++        self.saved_results: Dict[Call, Any] = {}
++        self.stats: Dict[Caller, QuickStats] = defaultdict(lambda: QuickStats())
+         if _safe_get_rank() == 0:
+             logger.warning(f"RerunStateMachine initialized in mode {mode}")
+ 
+@@ -247,7 +247,7 @@ class RerunStateMachine:
+ 
+         self.validation_counts = defaultdict(int)
+ 
+-        data_iterators: list[RerunDataIterator] = self._sanitize_data_iterators(data_iterator)
++        data_iterators: List[RerunDataIterator] = self._sanitize_data_iterators(data_iterator)
+ 
+         # Are we about to start the initial run?
+         if self.state == RerunState.NOT_RUNNING_YET:
+@@ -300,7 +300,7 @@ class RerunStateMachine:
+             if self.mode == RerunMode.REPORT_DETERMINISM_STATS:
+                 self.state = RerunState.NOT_RUNNING_YET
+                 self._maybe_report_stats()
+-                self.saved_results = defaultdict(list)
++                self.saved_results = defaultdict(List)
+                 return False
+             will_checkpoint_tensor: torch.Tensor = torch.tensor(
+                 [self.checkpoint_requested], dtype=torch.int32, device='cuda'
+@@ -625,7 +625,7 @@ class RerunStateMachine:
+         self.last_loss = loss
+         return result
+ 
+-    def state_dict(self, data_iterator: DataIteratorArgType, use_dist_ckpt: bool) -> dict[str, Any]:
++    def state_dict(self, data_iterator: DataIteratorArgType, use_dist_ckpt: bool) -> Dict[str, Any]:
+         """Method that returns a state dict to be checkpointed.
+ 
+         Args:
+@@ -648,9 +648,9 @@ class RerunStateMachine:
+                 return checkpoint
+         """
+ 
+-        data_iterators: list[RerunDataIterator] = self._sanitize_data_iterators(data_iterator)
++        data_iterators: List[RerunDataIterator] = self._sanitize_data_iterators(data_iterator)
+ 
+-        state_dict: dict[str, Any] = {
++        state_dict: Dict[str, Any] = {
+             'mode': self.mode,
+             'state': self.state,
+             'current_iteration': self.current_iteration,
+@@ -686,7 +686,7 @@ class RerunStateMachine:
+             )
+         return state_dict
+ 
+-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
++    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+         """Method that restores the state from a checkpoint.
+ 
+         Args:
+@@ -724,11 +724,11 @@ class RerunStateMachine:
+ 
+     def _sanitize_data_iterators(
+         self, data_iterator: DataIteratorArgType
+-    ) -> list["RerunDataIterator"]:
+-        data_iterators: list[RerunDataIterator]
++    ) -> List["RerunDataIterator"]:
++        data_iterators: List[RerunDataIterator]
+         if self.mode == RerunMode.DISABLED:
+             data_iterators = []
+-        elif not isinstance(data_iterator, list):
++        elif not isinstance(data_iterator, List):
+             data_iterators = [data_iterator]
+         else:
+             data_iterators = data_iterator
+@@ -792,7 +792,7 @@ class RerunStateMachine:
+                 world_size: int = torch.distributed.get_world_size()
+                 stats_list = [None for _ in range(world_size)]
+                 rank = torch.distributed.get_rank()
+-                torch.distributed.gather_object(dict(self.stats), stats_list if rank == 0 else None)
++                torch.distributed.gather_object(Dict(self.stats), stats_list if rank == 0 else None)
+                 if rank == 0:
+                     callers: Set[Caller] = {c for s in stats_list for c in s.keys()}
+                     logger.info("Stats on computation determinism in validation calls")
+@@ -833,7 +833,7 @@ class RerunDataIterator:
+ 
+     def __init__(self, iterable: Iterable[Any]) -> None:
+         self.iterable: Iterable[Any] = iterable
+-        self.saved_microbatches: list[Any] = []
++        self.saved_microbatches: List[Any] = []
+         self.replaying: bool = False
+         self.replay_pos: int = 0
+ 
+@@ -889,7 +889,7 @@ class QuickStats:
+     """
+ 
+     def __init__(self, max_size: int = 100000) -> None:
+-        self.samples: list[float] = []
++        self.samples: List[float] = []
+         self.pos: int = 0
+         self.zero_cnt: int = 0
+         self.max: float = 0.0
+@@ -909,7 +909,7 @@ class QuickStats:
+             if data > self.max:
+                 self.max = data
+ 
+-    def combine(self, others: list["QuickStats"]) -> None:
++    def combine(self, others: List["QuickStats"]) -> None:
+         """Append the samples from multiple instances into one object."""
+ 
+         if len(others) == 0:
+@@ -969,7 +969,7 @@ class QuickStats:
+ class RerunErrorInjector:
+     """A class to manage error injection into the rerun state machine."""
+ 
+-    _ERROR_NAMES: dict[RerunDiagnostic, str] = {
++    _ERROR_NAMES: Dict[RerunDiagnostic, str] = {
+         RerunDiagnostic.CORRECT_RESULT: "Expected result",
+         RerunDiagnostic.TRANSIENT_ERROR: "Transient error",
+         RerunDiagnostic.PERSISTENT_ERROR: "Persistent error",
+diff --git a/megatron/core/transformer/attention.py b/megatron/core/transformer/attention.py
+index 583e3c1e..9277f007 100644
+--- a/megatron/core/transformer/attention.py
++++ b/megatron/core/transformer/attention.py
+@@ -27,18 +27,24 @@ from .enums import AttnMaskType
+ from .transformer_config import TransformerConfig
+ 
+ try:
+-    from flash_attn import flash_attn_with_kvcache
+-except:
++    from flash_attn import flash_attn_with_kvcache, flash_attn_func
++    HAVE_FLASH_ATTN = True
++except ImportError:
+     flash_attn_with_kvcache = None
+-
++    flash_attn_func = None
++    HAVE_FLASH_ATTN = False
+ 
+ try:
+-    import transformer_engine  # pylint: disable=unused-import
+-
++    import transformer_engine
+     HAVE_TE = True
+-    from megatron.core.extensions.transformer_engine import SplitAlongDim
+ except ImportError:
+     HAVE_TE = False
++
++
++try:
++    raise ImportError
++    from megatron.core.extensions.transformer_engine import SplitAlongDim
++except ImportError:
+     SplitAlongDim = None
+ 
+ 
+@@ -344,7 +350,6 @@ class Attention(MegatronModule, ABC):
+         """
+         Perform a forward pass through the attention module.
+         """
+-
+         # hidden_states: [sq, b, h]
+         if self.config.flash_decode:
+             rotary_pos_emb = None
+@@ -358,41 +363,11 @@ class Attention(MegatronModule, ABC):
+         # =====================
+         # Query, Key, and Value
+         # =====================
+-        # Get the query, key and value tensors based on the type of attention -
+-        # self or cross attn.
+         query, key, value = self.get_query_key_value_tensors(hidden_states, key_value_states)
+ 
+         # ===================================================
+         # Adjust key, value, and rotary_pos_emb for inference
+         # ===================================================
+-
+-        # This branch only runs in the decode phase of flash decoding and returns after the linear
+-        # projection. This conditional is not used in the prefill phase or non-flash-decoding cases.
+-        if (
+-            self.config.flash_decode
+-            and inference_params is not None
+-            and self.layer_number
+-            in inference_params.key_value_memory_dict  # Decode phase if key already exists
+-        ):
+-            assert inference_params.sequence_len_offset is not None
+-            inference_key_memory, inference_value_memory = inference_params.key_value_memory_dict[
+-                self.layer_number
+-            ]
+-            output = self.flash_decoding(
+-                sequence_len_offset=inference_params.sequence_len_offset,
+-                query_layer=query,
+-                key_layer=key,
+-                value_layer=value,
+-                inference_key_memory=inference_key_memory,
+-                inference_value_memory=inference_value_memory,
+-                rotary_cos=rotary_pos_cos,
+-                rotary_sin=rotary_pos_sin,
+-            )
+-            out = output.transpose(0, 1).contiguous()
+-            context_layer = out.view(out.size(0), out.size(1), -1)
+-            output, bias = self.linear_proj(context_layer)
+-            return output, bias
+-
+         query, key, value, rotary_pos_emb, attn_mask_type = self._adjust_key_value_for_inference(
+             inference_params, query, key, value, rotary_pos_emb, rotary_pos_cos, rotary_pos_sin
+         )
+@@ -407,64 +382,73 @@ class Attention(MegatronModule, ABC):
+         # ================================================
+         if rotary_pos_emb is not None and not self.config.flash_decode:
+             q_pos_emb, k_pos_emb = rotary_pos_emb
+-
+-            if packed_seq_params is not None:
+-                if packed_seq_params.cu_seqlens_q_padded is not None:
+-                    cu_seqlens_q = packed_seq_params.cu_seqlens_q_padded
+-                else:
+-                    cu_seqlens_q = packed_seq_params.cu_seqlens_q
+-                if packed_seq_params.cu_seqlens_kv_padded is not None:
+-                    cu_seqlens_kv = packed_seq_params.cu_seqlens_kv_padded
+-                else:
+-                    cu_seqlens_kv = packed_seq_params.cu_seqlens_kv
+-            else:
+-                cu_seqlens_q = cu_seqlens_kv = None
+-            query = apply_rotary_pos_emb(
+-                query, q_pos_emb, config=self.config, cu_seqlens=cu_seqlens_q
+-            )
+-            key = apply_rotary_pos_emb(key, k_pos_emb, config=self.config, cu_seqlens=cu_seqlens_kv)
+-
+-            # TODO, can apply positional embedding to value_layer so it has
+-            # absolute positional embedding.
+-            # otherwise, only relative positional embedding takes effect
+-            # value_layer = apply_rotary_pos_emb(value_layer, k_pos_emb)
++            query = apply_rotary_pos_emb(query, q_pos_emb, config=self.config)
++            key = apply_rotary_pos_emb(key, k_pos_emb, config=self.config)
+ 
+         # ==================================
+         # core attention computation
+         # ==================================
+-
+-        if self.checkpoint_core_attention and self.training:
+-            core_attn_out = self._checkpointed_attention_forward(
+-                query,
+-                key,
+-                value,
+-                attention_mask,
+-                attn_mask_type=attn_mask_type,
+-                attention_bias=attention_bias,
+-                packed_seq_params=packed_seq_params,
+-            )
++        if self.config.flash_attention and HAVE_FLASH_ATTN:
++            # 使用 flash attention
++            batch_size = query.size(1)
++            seqlen_q = query.size(0)
++            seqlen_k = key.size(0)
++            
++            # 重塑张量以适应 flash attention
++            q = query.permute(1, 0, 2, 3)  # [b, sq, np, hn]
++            k = key.permute(1, 0, 2, 3)    # [b, sk, np, hn]
++            v = value.permute(1, 0, 2, 3)  # [b, sk, np, hn]
++            
++            if self.training:
++                # 训练时使用 flash_attn_func
++                core_attn_out = flash_attn_func(
++                    q=q,
++                    k=k,
++                    v=v,
++                    causal=self.attn_mask_type == AttnMaskType.causal,
++                    dropout_p=self.config.attention_dropout if self.training else 0.0,
++                )
++            else:
++                # 推理时使用 flash_attn_with_kvcache
++                core_attn_out = flash_attn_with_kvcache(
++                    q=q,
++                    k=k,
++                    v=v,
++                    causal=self.attn_mask_type == AttnMaskType.causal,
++                )
++            
++            # 重塑回原始格式
++            core_attn_out = core_attn_out.permute(1, 0, 2, 3)  # [sq, b, np, hn]
++            core_attn_out = core_attn_out.reshape(core_attn_out.size(0), core_attn_out.size(1), -1)
+         else:
+-            core_attn_out = self.core_attention(
+-                query,
+-                key,
+-                value,
+-                attention_mask,
+-                attn_mask_type=attn_mask_type,
+-                attention_bias=attention_bias,
+-                packed_seq_params=packed_seq_params,
+-            )
++            # 使用原始注意力实现
++            if self.checkpoint_core_attention and self.training:
++                core_attn_out = self._checkpointed_attention_forward(
++                    query,
++                    key,
++                    value,
++                    attention_mask,
++                    attn_mask_type=attn_mask_type,
++                    attention_bias=attention_bias,
++                    packed_seq_params=packed_seq_params,
++                )
++            else:
++                core_attn_out = self.core_attention(
++                    query,
++                    key,
++                    value,
++                    attention_mask,
++                    attn_mask_type=attn_mask_type,
++                    attention_bias=attention_bias,
++                    packed_seq_params=packed_seq_params,
++                )
+ 
+         if packed_seq_params is not None and packed_seq_params.qkv_format == 'thd':
+-            # reshape to same output shape as unpacked case
+-            # (t, np, hn) -> (t, b=1, h=np*hn)
+-            # t is the pack size = sum (sq_i)
+-            # note that batch is a dummy dimension in the packed case
+             core_attn_out = core_attn_out.reshape(core_attn_out.size(0), 1, -1)
+ 
+         # =================
+         # Output. [sq, b, h]
+         # =================
+-
+         output, bias = self.linear_proj(core_attn_out)
+ 
+         return output, bias
+diff --git a/megatron/core/transformer/moe/experts.py b/megatron/core/transformer/moe/experts.py
+index dbb25902..c37a9def 100644
+--- a/megatron/core/transformer/moe/experts.py
++++ b/megatron/core/transformer/moe/experts.py
+@@ -36,7 +36,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
+ from megatron.core.transformer.utils import make_sharded_object_for_checkpoint
+ 
+ try:
+-
++    raise ImportError
+     from megatron.core.extensions.transformer_engine import Fp8Padding, Fp8Unpadding
+ 
+     HAVE_TE = True
+@@ -756,8 +756,8 @@ class SequentialMLP(MegatronModule):
+ 
+         assert (
+             self.config.moe_ffn_hidden_size == self.config.ffn_hidden_size
+-        ), "Please use GroupedMLP or TEGroupedMLP when moe_ffn_hidden_size is \
+-                different from ffn_hidden_size"
++        ), f"Please use GroupedMLP or TEGroupedMLP when moe_ffn_hidden_size {self.config.moe_ffn_hidden_size} is \
++                different from ffn_hidden_size {self.config.ffn_hidden_size}"
+         for _ in range(self.num_local_experts):
+             expert = MLP(self.config, submodules, is_expert=True)
+             self.local_experts.append(expert)
+diff --git a/megatron/core/transformer/transformer_block.py b/megatron/core/transformer/transformer_block.py
+old mode 100755
+new mode 100644
+index d40476d2..48f7c70f
+--- a/megatron/core/transformer/transformer_block.py
++++ b/megatron/core/transformer/transformer_block.py
+@@ -20,6 +20,7 @@ from megatron.core.transformer.utils import sharded_state_dict_default
+ from megatron.core.utils import is_te_min_version, make_viewless_tensor
+ 
+ try:
++    raise ImportError
+     from megatron.core.extensions.transformer_engine import (
+         TEDelayedScaling,
+         TENorm,
+diff --git a/megatron/core/transformer/transformer_config.py b/megatron/core/transformer/transformer_config.py
+index 145ff402..c70a42ce 100644
+--- a/megatron/core/transformer/transformer_config.py
++++ b/megatron/core/transformer/transformer_config.py
+@@ -113,6 +113,9 @@ class TransformerConfig(ModelParallelConfig):
+     multi_latent_attention: bool = False
+     """Whether to use multi-latent attention."""
+ 
++    flash_attention: bool = True
++    """Whether to use flash attention for faster and more memory efficient attention computation."""
++
+     ####################
+     # initialization
+     ####################
+diff --git a/megatron/legacy/fp16_deprecated/loss_scaler.py b/megatron/legacy/fp16_deprecated/loss_scaler.py
+old mode 100755
+new mode 100644
+diff --git a/megatron/training/tokenizer/tokenizer.py b/megatron/training/tokenizer/tokenizer.py
+index d50f772e..9a652c52 100644
+--- a/megatron/training/tokenizer/tokenizer.py
++++ b/megatron/training/tokenizer/tokenizer.py
+@@ -159,7 +159,7 @@ class _HuggingFaceTokenizer(MegatronTokenizer):
+     def detokenize(self, token_ids, **kwargs):
+         return self._tokenizer.decode(token_ids, **kwargs)
+ 
+-    def offsets(self, ids: list[int], text: str) -> list[int]:
++    def offsets(self, ids: List[int], text: str) -> List[int]:
+         retok_ids: "transformers.BatchEncoding" = self._tokenizer(text)
+         offsets, next_start_idx = [], 0
+         for i in range(len(ids)):
+@@ -480,7 +480,7 @@ class _SentencePieceTokenizer(MegatronTokenizer):
+         text += self.tokenizer.decode_ids(ids[last_i:])
+         return text
+ 
+-    def offsets(self, ids: list[int], text: str) -> list[int]:
++    def offsets(self, ids: List[int], text: str) -> List[int]:
+         return [p.begin for p in self.tokenizer.decode_ids_as_immutable_proto(ids).pieces]
+ 
+     @property
+@@ -617,7 +617,7 @@ def reload_mergeable_ranks(path: str, max_vocab: Optional[int] = None) -> Dict[b
+     # reload vocab
+     with open(path, "r") as f:
+         vocab = json.load(f)
+-    assert isinstance(vocab, list)
++    assert isinstance(vocab, List)
+     print_rank_0(f"Vocab size: {len(vocab)}")
+     if max_vocab is not None:
+         vocab = vocab[:max_vocab]
+@@ -754,7 +754,7 @@ class CustomTikTokenizer(MegatronTokenizer):
+     def detokenize(self, tokens: List[int]) -> str:
+         return self._model.decode(tokens)
+ 
+-    def offsets(self, ids: list[int], text: str) -> list[int]:
++    def offsets(self, ids: List[int], text: str) -> List[int]:
+         return self._model.decode_with_offsets(ids)[1]
+ 
+     @property
+@@ -783,7 +783,7 @@ class _NullTokenizer(MegatronTokenizer):
+         text = [str(x) for x in ids]
+         return ' '.join(text)
+ 
+-    def offsets(self, ids: list[int], text: str) -> list[int]:
++    def offsets(self, ids: List[int], text: str) -> List[int]:
+         offsets, start_idx = [], 0
+         for id_ in ids:
+             offsets.append(start_idx)
+diff --git a/pretrain_gpt.py b/pretrain_gpt.py
+index 1b6b15f5..1e51b1b7 100644
+--- a/pretrain_gpt.py
++++ b/pretrain_gpt.py
+@@ -3,6 +3,8 @@
+ 
+ import os
+ import torch
++from STAlloc.utils.hook_model import hook_memory_model
++torch.cuda.empty_cache = lambda: None
+ from functools import partial
+ from contextlib import nullcontext
+ import inspect
+@@ -128,7 +130,8 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
+                 rope_scaling=args.use_rope_scaling
+             )
+ 
+-    return model
++    # return model
++    return hook_memory_model(model, args)
+ 
+ 
+ def get_batch(data_iterator):
+diff --git a/tests/unit_tests/transformer/test_spec_customization.py b/tests/unit_tests/transformer/test_spec_customization.py
+old mode 100755
+new mode 100644
+diff --git a/tools/preprocess_mmdata.py b/tools/preprocess_mmdata.py
+old mode 100755
+new mode 100644
+diff --git a/tools/retro/text_generation/evaluate.py b/tools/retro/text_generation/evaluate.py
+old mode 100755
+new mode 100644
+diff --git a/tools/retro/text_generation/metrics.py b/tools/retro/text_generation/metrics.py
+old mode 100755
+new mode 100644
+diff --git a/tools/retro/text_generation/retro_text_generation.py b/tools/retro/text_generation/retro_text_generation.py
+old mode 100755
+new mode 100644
