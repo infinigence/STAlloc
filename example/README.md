@@ -83,4 +83,4 @@ python example/memory_statistics.py example/analyze/qwen-moe/
 ```
 
 ## Note
-Offloading is not supported in the open-source test version of Megatron-LM. Therefore, we implemented and tested this feature (ZOR in Figure 7 of paper) in our private Megatron repository. For this set of experiments, we provide the original experimental data.
+Offloading is not supported in the open-source test version of Megatron-LM. Therefore, we implemented and tested this feature (ZOR in Figure 7 of paper) in our own Megatron-LM repository. For this set of experiments, we provide the original experiment data as recorded examples.
